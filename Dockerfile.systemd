@@ -1,0 +1,13 @@
+FROM almalinux:9
+
+# Installe les dépendances de base, y compris systemd
+RUN dnf install -y --allowerasing bash curl wget nano ncurses openssh-clients systemd && \
+    dnf clean all && \
+    systemctl set-default multi-user.target
+
+# Copie le script
+COPY a9repos.sh /root/a9repos.sh
+RUN chmod +x /root/a9repos.sh
+
+# Démarre systemd avec prise en charge de cgroup v2
+CMD ["/usr/sbin/init", "systemd.unified_cgroup_hierarchy=1"]

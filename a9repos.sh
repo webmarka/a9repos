@@ -133,21 +133,20 @@ function _preCHECK() {
 
 # Function to disable SELinux
 function _doSELINUX() {
-	echo -en "\033[1mDisable SELinux? (required to continue) [\033[0;1;38;5;40mY\033[0;1m/n]\033[0m "; read -er _SEL;
-	case "${_SEL}" in
-		[nN][oO]|[no])
-			>&2 echo -e "\033[1;38;5;196mERROR\033[0;1m: I require SELinux to be disabled to continue, aborting.\033[0m"; exit 1;
-			;;
-		*)
-			echo -e "\033[1mDisabling SELinux...\033[0m";
-			setenforce 0 &>/dev/null;
-			sed -i 's/\(^SELINUX=\).*/\SELINUX=disabled/' /etc/selinux/config 2>/dev/null;
-			sed -i 's/\(^SELINUX=\).*/\SELINUX=disabled/' /etc/sysconfig/selinux 2>/dev/null;
-			echo -e "  - \033[32mSELinux disabled\033[0;1m.\033[0m";
-			sleep 0.3;
-			;;
-	esac
-	unset _SEL;
+    echo -en "\033[1mDisable SELinux? (recommended but optional) [\033[0;1;38;5;40mY\033[0;1m/n]\033[0m "; read -er _SEL;
+    case "${_SEL}" in
+        [nN][oO]|[no])
+            echo -e "\033[1mSELinux will remain enabled. Continuing script...\033[0m"; sleep 0.3;
+            ;;
+        *)
+            echo -e "\033[1mDisabling SELinux...\033[0m";
+            setenforce 0 &>/dev/null;
+            sed -i 's/\(^SELINUX=\).*/\SELINUX=disabled/' /etc/selinux/config 2>/dev/null;
+            sed -i 's/\(^SELINUX=\).*/\SELINUX=disabled/' /etc/sysconfig/selinux 2>/dev/null;
+            echo -e "  - \033[32mSELinux disabled\033[0;1m.\033[0m"; sleep 0.3;
+            ;;
+    esac
+    unset _SEL;
 }
 
 # Function that imports repo GPG signing keys
@@ -329,12 +328,16 @@ function _addtoYUMCONF() {
 # ensure your bootloader is updated everytime. Thanks to Yum post actions plugin
 # To know more about 'update-grub' you can run it with -h or --help
 function _updateGRUB() {
-	echo -e "\033[1mGetting 'update-grub' tool...\033[0m"; sleep 0.1;
-	mkdir -p ~/{bin,.config} &>/dev/null;
-	curl -4skL ${REPOURL}/bin/update-grub -o ~/bin/update-grub;
-	chmod +x ~/bin/update-grub &>/dev/null; sleep 0.1;
-	echo -e "  - \033[32mGrub-Updater tool installed in ~/bin\033[0;1m. Updating bootloader now.\033[0m\n"; sleep 0.3;
-	rm -f /boot/grub2/grubenv; ~/bin/update-grub; echo;
+    if [ -d /boot/grub2 ]; then
+        echo -e "\033[1mGetting 'update-grub' tool...\033[0m"; sleep 0.1;
+        mkdir -p ~/{bin,.config} &>/dev/null;
+        curl -4skL ${REPOURL}/bin/update-grub -o ~/bin/update-grub;
+        chmod +x ~/bin/update-grub &>/dev/null; sleep 0.1;
+        echo -e "  - \033[32mGrub-Updater tool installed in ~/bin\033[0;1m. Updating bootloader now.\033[0m\n"; sleep 0.3;
+        rm -f /boot/grub2/grubenv; ~/bin/update-grub; echo;
+    else
+        echo -e "\033[1mSkipping GRUB update in container environment...\033[0m"; sleep 0.3;
+    fi
 }
 
 # Function to install development group packages and some other dev libs
@@ -796,6 +799,7 @@ function _addCOLORS() {
 
 # Function to create a yum post install/update/remove action on all kernel-related packages
 function _createYUMPOST() {
+  mkdir -p /etc/yum/post-actions # Crée le répertoire s'il n'existe pas
 	cat <<- __EOF__ >/etc/yum/post-actions/kernel.action
 		# This runs update-grub after any kernel modification (install, update, remove).
 		# If 'update-grub' cannot be found in the typical c7repos location, directly run
@@ -808,23 +812,28 @@ function _createYUMPOST() {
 # I don't care if the user sets a bad hostname, he should be
 # more careful next time as i don't want to manage that input
 function _setHOSTNAME() {
-	echo -en "\033[1mSet a HOSTNAME for this server? [\033[0;1;38;5;40mY\033[0;1m/n]\033[0m "; read -er _HSTNM;
+    echo -en "\033[1mSet a HOSTNAME for this server? [\033[0;1;38;5;40mY\033[0;1m/n]\033[0m "; read -er _HSTNM;
 
-	case "${_HSTNM}" in
-		[nN][oO]|[no])
-			sleep 0.3;
-			;;
-		*)
-			read -rp $"Please enter the HOSTNAME you want for this server: " _HOSTNAME;
-			if [[ -n "${_HOSTNAME}" ]]; then
-				hostnamectl set-hostname "${_HOSTNAME}";
-				echo -e "  - \033[32mHOSTNAME set to '${_HOSTNAME}'\033[0;1m.\033[0m"; sleep 0.3;
-			else
-				echo -e "  - \033[1;38;5;196;4mThe hostname cannot be null... \033[0;1mAborting.\033[0m"; sleep 2;
-			fi
-			;;
-	esac
-	unset _HSTNM _HOSTNAME;
+    case "${_HSTNM}" in
+        [nN][oO]|[no])
+            sleep 0.3;
+            ;;
+        *)
+            read -rp $"Please enter the HOSTNAME you want for this server: " _HOSTNAME;
+            if [[ -n "${_HOSTNAME}" ]]; then
+                if command -v hostnamectl &>/dev/null && systemctl is-system-running &>/dev/null; then
+                    hostnamectl set-hostname "${_HOSTNAME}";
+                else
+                    echo "${_HOSTNAME}" > /etc/hostname; # Fallback pour conteneurs sans systemd
+                    hostname "${_HOSTNAME}";
+                fi
+                echo -e "  - \033[32mHOSTNAME set to '${_HOSTNAME}'\033[0;1m.\033[0m"; sleep 0.3;
+            else
+                echo -e "  - \033[1;38;5;196;4mThe hostname cannot be null... \033[0;1mAborting.\033[0m"; sleep 2;
+            fi
+            ;;
+    esac
+    unset _HSTNM _HOSTNAME;
 }
 
 # Function to add cloudflare/google's resolvers to resolv.conf file.
@@ -878,10 +887,10 @@ _setHOSTNAME;
 _createSSHKEYS;
 
 # Call to install Yum-utils/fastestmirror/deltapm/yum-plugin-post-transaction-actions
-_installYUMSTUFF;
+#_installYUMSTUFF;
 
 # Call to set Yum post install actions (essentially for kernel packages manipulations)
-_createYUMPOST;
+#_createYUMPOST;
 
 # Call to update bootloader config after any yum kernel modifications
 _updateGRUB;
@@ -899,7 +908,7 @@ _installNANO;
 _editREPOS;
 
 # Call to add some extra Yum configs
-_addtoYUMCONF;
+#_addtoYUMCONF;
 
 # Call to update system packages
 _updateSYSTEM;
