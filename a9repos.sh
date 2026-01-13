@@ -114,26 +114,71 @@ function _showDANGER() {
 	[[ ! ${#@} -eq 0 ]] && { _dangerMSG="${@}"; echo "${_dangerASCII}"; echo -ne "\033[1;38;5;196m" && printf "\n%*s\n" $(((${#_dangerMSG}+50)/2)) "${_dangerMSG}" && echo -e "\033[0m"; }
 }
 
-# Function that checks all the required things for the script to run
+# Function that checks all prerequisites for the script to run
 function _preCHECK() {
-	 # Check if we run as super-user... else... a quote from Linus Torvalds.
-	[[ ${EUID} -ne 0 ]] && >&2 echo '“ You not only have to be a good coder to create a system like Linux, you have to be a sneaky bastard, too. ” -LT' && exit 1;
+    # Check if running as super-user, else exit with a Linus Torvalds quote
+    [[ ${EUID} -ne 0 ]] && >&2 echo '“ You not only have to be a good coder to create a system like Linux, you have to be a sneaky bastard, too. ” -LT' && exit 1
 
-	# Check if we run a x86_64 architecture, else abort.
-	_ARCH_TYPE=$(uname -m);
-	[[ "${_ARCH_TYPE}" != "x86_64" ]] && >&2 echo -e "\033[1;38;5;196mERROR\033[0;1m: This system is not x86_64 compatible, aborting.\033[0m" && exit 1;
+    # Check if architecture is x86_64, else abort
+    _ARCH_TYPE=$(uname -m)
+    [[ "${_ARCH_TYPE}" != "x86_64" ]] && >&2 echo -e "\033[1;38;5;196mERROR\033[0;1m: This system is not x86_64 compatible, aborting.\033[0m" && exit 1
 
-    # Check if we are using AlmaLinux, else abort.
-    [[ ! -f "/etc/almalinux-release" ]] && >&2 echo -e "\033[1;38;5;196mERROR\033[0;1m: This ain't an AlmaLinux release, aborting.\033[0m" && exit 1;
+    # Detect the distribution and set PKG_MANAGER
+    _detectDISTRO
 
-    # Check if we are using the right AlmaLinux version for this script, else abort.
-    _CVER=$(cat /etc/os-release | grep -Pio 'VERSION_ID="\K[[:digit:]]');
-    [[ "${_CVER}" != "9" ]] && >&2 echo -e "\033[1;38;5;196mERROR\033[0;1m: Incompatible AlmaLinux release version, aborting.\033[0m" && exit 1;
+    # Proceed only if PKG_MANAGER is dnf (RHEL family), warn for older versions
+    if [[ "$PKG_MANAGER" != "dnf" ]]; then
+        >&2 echo -e "\033[1;38;5;196mERROR\033[0;1m: This script requires a RHEL-based system with dnf (CentOS/AlmaLinux/Rocky/RHEL). Detected: $ID with $PKG_MANAGER, aborting.\033[0m"
+        exit 1
+    fi
+
+    # Warn if version is older than 8 (e.g., CentOS 7)
+    if [[ "$ID" == "centos" && "$VERSION_ID" =~ ^7 ]]; then
+        echo -e "\033[1;38;5;208mWARNING\033[0;1m: CentOS 7 detected. Some repositories and packages may not be compatible.\033[0m"
+        echo "Proceeding in 5 seconds... Press Ctrl+C to abort."
+        sleep 5
+    elif [[ "$VERSION_ID" =~ ^[6-7] ]]; then
+        echo -e "\033[1;38;5;208mWARNING\033[0;1m: This script is optimized for RHEL 8+ derivatives. Detected: $ID $VERSION_ID\033[0m"
+        echo "Proceeding in 5 seconds... Press Ctrl+C to abort."
+        sleep 5
+    fi
+
+    echo "Starting a9repos.sh on $ID $VERSION_ID with $PKG_MANAGER..."
 }
+
+# Function to detect the Linux distribution
+function _detectDISTRO() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "$ID" in
+            "almalinux"|"rocky"|"rhel"|"centos")
+                echo "Running on RHEL-based system ($ID $VERSION_ID)"
+                if command -v dnf >/dev/null 2>&1; then
+                    PKG_MANAGER="dnf"
+                elif command -v yum >/dev/null 2>&1; then
+                    PKG_MANAGER="yum"
+                else
+                    echo "No compatible package manager found (dnf/yum missing)"
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "This script is designed for RHEL-based systems (CentOS/AlmaLinux/Rocky/RHEL). Detected: $ID $VERSION_ID"
+                exit 1
+                ;;
+        esac
+    else
+        echo "Unable to detect OS. /etc/os-release not found."
+        exit 1
+    fi
+}
+
+# Call the pre-check function
+_preCHECK
 
 # Function to disable SELinux
 function _doSELINUX() {
-    echo -en "\033[1mDisable SELinux? (recommended but optional) [\033[0;1;38;5;40mY\033[0;1m/n]\033[0m "; read -er _SEL;
+    echo -en "\033[1mDisable SELinux? (optional) [\033[0;1;38;5;40mY\033[0;1m/n]\033[0m "; read -er _SEL;
     case "${_SEL}" in
         [nN][oO]|[no])
             echo -e "\033[1mSELinux will remain enabled. Continuing script...\033[0m"; sleep 0.3;
